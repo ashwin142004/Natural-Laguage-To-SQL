@@ -4,18 +4,21 @@ import sqlite3
 import streamlit as st
 import google.generativeai as genai
 
-load_dotenv()  
+# Load environment variables
+load_dotenv()
 
-# Set up the Google Generative AI API key
+# Configure Gemini API key
 genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
-model = genai.GenerativeModel('gemini-pro')
+model = genai.GenerativeModel('gemini-1.5-flash')
 
+# Combine prompt and question into a single string
 def get_gemini_response(prompt, question):
     try:
-        response = model.generate_content(prompt = prompt, question=question)
+        full_prompt = f"{prompt}\nQuestion: {question}"
+        response = model.generate_content(full_prompt)
         parts = response.candidates[0].content.parts
         text = ' '.join([part.text for part in parts])
-        return text
+        return text.strip().strip('`').strip()
     except Exception as e:
         st.error(f"Error generating text: {e}")
         return None
@@ -26,7 +29,6 @@ def read_sql_query(sql, db):
     try:
         cursor.execute(sql)
         data = cursor.fetchall()
-        connection.commit()
         return data
     except sqlite3.Error as e:
         st.error(f"SQL error: {e}")
@@ -35,37 +37,48 @@ def read_sql_query(sql, db):
         connection.close()
 
 prompt = """
-You are an expert in converting english questions to SQL queries.
-The SQL database has the table employee with the following columns:
+You are an expert in converting English questions to SQL queries.
+The SQL database has the table 'employee' with the following columns:
 EMP_NAME varchar(50), EMP_ID varchar(50), DESIGNATION varchar(50), EMP_AGE int
-\n\n
 
-For Example, \n
-Example 1: How many entries of records are present?
-the SQL query is: SELECT COUNT(*) FROM employee; \n\n
+Examples:
 
-Example 2: What is the name of the employee with ID E123?
-the SQL query is: SELECT EMP_NAME FROM employee WHERE EMP_ID = 'E123'; \n\n
+1. How many entries of records are present?
+SQL: SELECT COUNT(*) FROM employee;
 
-Example 3: Tell me all the employees with designation as Software Engineer?
-the SQL query is: SELECT * FROM employee WHERE DESIGNATION = 'Software Engineer'; \n\n
+2. What is the name of the employee with ID E123?
+SQL: SELECT EMP_NAME FROM employee WHERE EMP_ID = 'E123';
 
-also the SQL query should not have  ``` in the begning and end of the query.
+3. Tell me all the employees with designation as Software Engineer?
+SQL: SELECT * FROM employee WHERE DESIGNATION = 'Software Engineer';
 
-if generated SQL query contains triple quotes, remove them, and give the SQL query without triple quotes.
-
-You should not allow DML commands like INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE etc.
-\n\n
+Important rules:
+- Do not use DML commands like INSERT, UPDATE, DELETE, DROP, CREATE, ALTER, TRUNCATE etc.
+- Only output the SQL query.
+- Do not include triple backticks (```).
 """
+
+# Streamlit UI
 st.set_page_config(page_title="AskSQL")
-st.header("Gemini Application to retrieve SQL data using English")
-question=st.text_input("Enter your question: ",key="input")
-submit=st.button("Submit")
+st.header("Gemini Application to Retrieve SQL Data Using English")
+question = st.text_input("Enter your question: ", key="input")
+submit = st.button("Submit")
 
 if submit:
-    response=get_gemini_response(prompt, question)
-    print(response)
-    response=read_sql_query(response,"employee.db")
-    st.subheader("The LLM response is")
-    for row in response:
-        st.write(row)
+    sql_query = get_gemini_response(prompt, question)
+
+    if sql_query is None or sql_query.strip() == "":
+        st.error("Failed to generate SQL query.")
+    else:
+        st.subheader("Generated SQL Query")
+        st.code(sql_query, language='sql')
+
+        result = read_sql_query(sql_query, "employee.db")
+
+        if result:
+            st.subheader("SQL Output")
+            for row in result:
+                st.write(row)
+        else:
+            st.error("No results or query failed.")
+
